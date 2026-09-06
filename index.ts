@@ -12,6 +12,7 @@ import { join, dirname } from "node:path";
 import type { ColorScheme, SegmentContext, StatusLinePreset, StatusLineSegmentId, StatusLineSeparatorStyle } from "./types.ts";
 import type { PowerlineConfig } from "./powerline-config.ts";
 import { BashTranscriptStore } from "./bash-mode/transcript.ts";
+import { registerCustomStatus } from "./custom-status.ts";
 import {
   BashCompletionEngine,
   BashAutocompleteProvider,
@@ -1160,6 +1161,9 @@ function warnInvalidSegmentSettings(ctx: any): void {
 }
 
 export default function powerlineFooter(pi: ExtensionAPI) {
+  // 自定义状态发布器(context-bar / req-stats / model-think),见 custom-status.ts
+  registerCustomStatus(pi);
+
   const editorPerf = new EditorPerfProfiler(readEditorPerfOptions());
   const startupSettings = readSettings();
   config = parsePowerlineConfig(startupSettings.powerline, PRESET_NAMES);
