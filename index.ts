@@ -1066,16 +1066,18 @@ function buildContentFromParts(
 }
 
 /**
- * Responsive segment layout - fits segments into top bar, overflows to secondary row.
- * When terminal is wide enough, secondary segments move up to top bar.
- * When narrow, top bar segments overflow down to secondary row.
+ * Responsive segment layout - fits segments into the top bar, then the secondary row,
+ * then a tertiary row. Segments are placed in order: the secondary row takes a prefix
+ * of the overflow, the tertiary row takes the next contiguous run, and everything after
+ * the first segment that fits in neither is dropped.
+ * When terminal is wide enough, overflow segments move up to the top bar.
  */
-function computeResponsiveLayout(
+export function computeResponsiveLayout(
   ctx: SegmentContext,
   presetDef: ReturnType<typeof getPreset>,
   allSegmentIds: StatusLineSegmentId[],
   availableWidth: number
-): { topContent: string; secondaryContent: string } {
+): { topContent: string; secondaryContent: string; tertiaryContent: string } {
   const separatorStyle = config.separator ?? presetDef.separator;
   const separatorDef = getSeparator(separatorStyle);
   const sepWidth = visibleWidth(separatorDef.left) + 2; // separator + spaces around it
@@ -1090,7 +1092,7 @@ function computeResponsiveLayout(
   }
 
   if (renderedSegments.length === 0) {
-    return { topContent: "", secondaryContent: "" };
+    return { topContent: "", secondaryContent: "", tertiaryContent: "" };
   }
 
   // Calculate how many segments fit in top bar
@@ -1113,24 +1115,39 @@ function computeResponsiveLayout(
     }
   }
 
-  // Fit overflow segments into secondary row (same width constraint)
-  // Stop at first non-fitting segment to preserve ordering
+  // Fit overflow segments into the secondary row, then into a tertiary row.
+  // Order matters: once a segment has to go to the tertiary row, the secondary row is
+  // closed, otherwise a later narrow segment would be pulled back into it and render
+  // ahead of the segment that overflowed. Stop at the first segment that fits nowhere.
   let secondaryWidth = baseOverhead;
   let secondarySegments: string[] = [];
+  let secondaryClosed = false;
+  let tertiaryWidth = baseOverhead;
+  let tertiarySegments: string[] = [];
 
   for (const seg of overflowSegments) {
-    const neededWidth = seg.width + (secondarySegments.length > 0 ? sepWidth : 0);
-    if (secondaryWidth + neededWidth <= availableWidth) {
-      secondarySegments.push(seg.content);
-      secondaryWidth += neededWidth;
-    } else {
-      break;
+    if (!secondaryClosed) {
+      const neededWidth = seg.width + (secondarySegments.length > 0 ? sepWidth : 0);
+      if (secondaryWidth + neededWidth <= availableWidth) {
+        secondarySegments.push(seg.content);
+        secondaryWidth += neededWidth;
+        continue;
+      }
+      secondaryClosed = true;
     }
+    const neededTertiaryWidth = seg.width + (tertiarySegments.length > 0 ? sepWidth : 0);
+    if (tertiaryWidth + neededTertiaryWidth <= availableWidth) {
+      tertiarySegments.push(seg.content);
+      tertiaryWidth += neededTertiaryWidth;
+      continue;
+    }
+    break;
   }
 
   return {
     topContent: buildContentFromParts(topSegments, separatorStyle),
     secondaryContent: buildContentFromParts(secondarySegments, separatorStyle),
+    tertiaryContent: buildContentFromParts(tertiarySegments, separatorStyle),
   };
 }
 
@@ -1220,7 +1237,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
 
   // Cache for the top and secondary powerline widgets.
   let lastLayoutWidth = 0;
-  let lastLayoutResult: { topContent: string; secondaryContent: string } | null = null;
+  let lastLayoutResult: { topContent: string; secondaryContent: string; tertiaryContent: string } | null = null;
   let lastLayoutTimestamp = 0;
   let layoutDirty = true;
   let forceNextLayoutRecompute = false;
@@ -2773,7 +2790,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
    * Get cached responsive layout or compute fresh one.
    * The segment context scans session state, so keep it stable across render bursts.
    */
-  function getResponsiveLayout(width: number, theme: Theme): { topContent: string; secondaryContent: string } {
+  function getResponsiveLayout(width: number, theme: Theme): { topContent: string; secondaryContent: string; tertiaryContent: string } {
     const now = Date.now();
     const cacheTtl = isStreaming ? STREAMING_LAYOUT_CACHE_TTL_MS : LAYOUT_CACHE_TTL_MS;
 
@@ -2809,7 +2826,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
       if (!isStaleExtensionContextError(error)) throw error;
       currentCtx = null;
       lastLayoutWidth = width;
-      lastLayoutResult = { topContent: "", secondaryContent: "" };
+      lastLayoutResult = { topContent: "", secondaryContent: "", tertiaryContent: "" };
       lastLayoutTimestamp = now;
       layoutDirty = false;
       forceNextLayoutRecompute = false;
@@ -2854,7 +2871,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     if (!currentCtx) return [];
 
     const layout = getResponsiveLayout(width, theme);
-    return layout.secondaryContent ? [layout.secondaryContent] : [];
+    return [layout.secondaryContent, layout.tertiaryContent].filter((line) => line);
   }
 
   function renderPowerlineQueuePreviewLines(width: number, theme: Theme): string[] {
